@@ -290,10 +290,15 @@ func DeleteStorageById(ctx context.Context, id uint) error {
 
 // MustSaveDriverStorage call from specific driver
 func MustSaveDriverStorage(driver driver.Driver) {
-	err := saveDriverStorage(driver)
+	err := SaveDriverStorage(driver)
 	if err != nil {
 		log.Errorf("failed save driver storage: %s", err)
 	}
+}
+
+// SaveDriverStorage persists the current storage configuration and returns any error.
+func SaveDriverStorage(driver driver.Driver) error {
+	return saveDriverStorage(driver)
 }
 
 func saveDriverStorage(driver driver.Driver) error {
