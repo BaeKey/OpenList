@@ -1,0 +1,97 @@
+name: Custom Docker Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      push_latest:
+        description: Also push the latest tag
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  CROSS_TAGLIB_VERSION: "2.2.0-1"
+
+jobs:
+  docker:
+    name: Build and push custom image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Get version info
+        id: version
+        shell: bash
+        run: |
+          GIT_TAG=$(git tag --sort=-committerdate | head -n 1)
+          if [ -n "$GIT_TAG" ] && [[ "$GITHUB_REF" != refs/tags/* ]]; then
+            GIT_TAG="${GIT_TAG}-SNAPSHOT"
+          fi
+          GIT_SHA=$(git rev-parse --short HEAD)
+          VERSION="$GIT_TAG"
+          if [ -z "$VERSION" ]; then
+            VERSION="sha-${GIT_SHA}"
+          fi
+          {
+            echo "git_tag=$GIT_TAG"
+            echo "git_sha=$GIT_SHA"
+            echo "value=$VERSION"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Normalize image name
+        id: image
+        shell: bash
+        run: echo "repository=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image tags
+        id: tags
+        shell: bash
+        env:
+          IMAGE_REPOSITORY: ${{ steps.image.outputs.repository }}
+          VERSION: ${{ steps.version.outputs.value }}
+          GIT_SHA: ${{ steps.version.outputs.git_sha }}
+          PUSH_LATEST: ${{ inputs.push_latest }}
+        run: |
+          {
+            echo 'value<<EOF'
+            echo "${IMAGE_REPOSITORY}:${VERSION}"
+            echo "${IMAGE_REPOSITORY}:sha-${GIT_SHA}"
+            if [ "$PUSH_LATEST" = "true" ]; then
+              echo "${IMAGE_REPOSITORY}:latest"
+            fi
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and push image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.tags.outputs.value }}
+          build-args: |
+            GIT_SHA=${{ steps.version.outputs.git_sha }}
+            GIT_TAG=${{ steps.version.outputs.git_tag }}
+            CROSS_TAGLIB_VERSION=${{ env.CROSS_TAGLIB_VERSION }}
+
+      - name: Inspect published image
+        run: docker buildx imagetools inspect ${{ steps.image.outputs.repository }}:${{ steps.version.outputs.value }}
